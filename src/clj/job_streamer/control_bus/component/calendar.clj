@@ -58,6 +58,8 @@
                               '{:find [[(pull ?cal [:*]) ...]]
                                 :in [$]
                                 :where [[?cal :calendar/name]]})
+                     (sort-by first)
+                     reverse
                      (map (fn [cal]
                             (update-in cal [:calendar/weekly-holiday]
                                        edn/read-string)))))))
@@ -77,7 +79,7 @@
                      '{:find [(pull ?e [:*]) .]
                        :in [$ ?n]
                        :where [[?e :calendar/name ?n]]} name)
-   
+
    :put! (fn [{cal :edn}]
            (d/transact datomic
                        [{:db/id (:db/id cal)
@@ -103,10 +105,10 @@
   component/Lifecycle
 
   (start [component]
-    component)
+         component)
 
   (stop [component]
-    component))
+        component))
 
 (defn calendar-component [options]
   (map->Calendar options))

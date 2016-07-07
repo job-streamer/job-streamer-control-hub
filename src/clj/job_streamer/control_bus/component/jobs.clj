@@ -73,12 +73,14 @@
                      :in [$ ?app-name ?query]
                      :where [[?app :application/name ?app-name]
                              [?app :application/jobs ?job]]}
-        jobs (d/query datomic
-                      (if (not-empty query)
-                        (update-in base-query [:where]
-                                   conj '[(fulltext $ :job/name ?query) [[?job ?job-name]]])
-                            base-query)
-                      app-name (or query ""))]
+        jobs (->> (d/query datomic
+                           (if (not-empty query)
+                             (update-in base-query [:where]
+                                        conj '[(fulltext $ :job/name ?query) [[?job ?job-name]]])
+                             base-query)
+                           app-name (or query ""))
+                  (sort-by first)
+                  reverse)]
     {:results (->> jobs
                    (drop (dec (or offset 0)))
                    (take (or limit 20))
@@ -131,7 +133,7 @@
                                     :job-execution/agent
                                     [:agent/instance-id :agent/name]}]
                                  (first %)))
-                   
+
                    vec)
      :hits    (count executions)
      :offset  offset
@@ -148,16 +150,16 @@
     (update-in je [:job-execution/step-executions]
                #(map (fn [step-execution]
                        (assoc step-execution
-                              :step-execution/logs
-                              (->> (d/query datomic
-                                            '{:find [[(pull ?log [:* {:execution-log/level [:db/ident]}]) ...]]
-                                              :in [$ ?step-execution-id ?instance-id]
-                                              :where [[?log :execution-log/step-execution-id ?step-execution-id]
-                                                      [?log :execution-log/agent ?agent]
-                                                      [?agent :agent/instance-id ?instance-id]]}
-                                            (:step-execution/step-execution-id step-execution)
-                                            (get-in je [:job-execution/agent :agent/instance-id] ""))
-                                   (sort-by :execution-log/date compare)))) %))))
+                         :step-execution/logs
+                         (->> (d/query datomic
+                                       '{:find [[(pull ?log [:* {:execution-log/level [:db/ident]}]) ...]]
+                                         :in [$ ?step-execution-id ?instance-id]
+                                         :where [[?log :execution-log/step-execution-id ?step-execution-id]
+                                                 [?log :execution-log/agent ?agent]
+                                                 [?agent :agent/instance-id ?instance-id]]}
+                                       (:step-execution/step-execution-id step-execution)
+                                       (get-in je [:job-execution/agent :agent/instance-id] ""))
+                              (sort-by :execution-log/date compare)))) %))))
 
 (defn find-step-execution [{:keys [datomic]} instance-id step-execution-id]
   (d/query datomic
@@ -255,8 +257,8 @@
                                                           (when-let [time-monitor (get-in job [:job/time-monitor :db/id])]
                                                             {:job/time-monitor (d/pull datomic
                                                                                        '[:time-monitor/duration
-                                                                                             {:time-monitor/action [:db/ident]}
-                                                                                             :time-monitor/notification-type] time-monitor)})
+                                                                                         {:time-monitor/action [:db/ident]}
+                                                                                         :time-monitor/notification-type] time-monitor)})
                                                           (when-let [status-notifications (:job/status-notifications job)]
                                                             {:job/status-notifications (->> status-notifications
                                                                                             (map (fn [sn]
@@ -283,121 +285,121 @@
               (d/transact datomic
                           [[:db.fn/retractEntity job-id]
                            [:db/retract app-id :application/jobs job-id]]))
-  :handle-ok (fn [ctx]
-               (let [job (d/pull datomic
-                                 '[:*
-                                   {(limit :job/executions 99999)
-                                    [:db/id
-                                     :job-execution/start-time
-                                     :job-execution/end-time
-                                     :job-execution/create-time
-                                     :job-execution/exit-status
-                                     {:job-execution/batch-status [:db/ident]}
-                                     {:job-execution/agent [:agent/name :agent/instance-id]}]}
-                                   {:job/schedule [:schedule/cron-notation :schedule/active?]}]
-                                 (:job-id ctx))
-                     total (count (:job/executions job))
-                     success (->> (:job/executions job)
-                                  (filter #(= (get-in % [:job-execution/batch-status :db/ident])
-                                              :batch-status/completed))
-                                  count)
-                     failure (->> (:job/executions job)
-                                  (filter #(= (get-in % [:job-execution/batch-status :db/ident])
-                                              :batch-status/failed))
-                                  count)
-                     average (if (= success 0) 0
-                               (/ (->> (:job/executions job)
-                                       (filter #(= (get-in % [:job-execution/batch-status :db/ident])
-                                                   :batch-status/completed))
-                                       (map #(- (.getTime (:job-execution/end-time %))
-                                                (.getTime (:job-execution/start-time %))))
-                                       (reduce +))
-                                  success))]
-                 (-> job
-                     (assoc :job/stats {:total total :success success :failure failure :average average}
-                       :job/latest-execution (find-latest-execution (:job/executions job))
-                       :job/next-execution   (find-next-execution jobs job)
-                       :job/dynamic-parameters (extract-job-parameters job))
-                     (dissoc :job/executions))))))
+   :handle-ok (fn [ctx]
+                (let [job (d/pull datomic
+                                  '[:*
+                                    {(limit :job/executions 99999)
+                                     [:db/id
+                                      :job-execution/start-time
+                                      :job-execution/end-time
+                                      :job-execution/create-time
+                                      :job-execution/exit-status
+                                      {:job-execution/batch-status [:db/ident]}
+                                      {:job-execution/agent [:agent/name :agent/instance-id]}]}
+                                    {:job/schedule [:schedule/cron-notation :schedule/active?]}]
+                                  (:job-id ctx))
+                      total (count (:job/executions job))
+                      success (->> (:job/executions job)
+                                   (filter #(= (get-in % [:job-execution/batch-status :db/ident])
+                                               :batch-status/completed))
+                                   count)
+                      failure (->> (:job/executions job)
+                                   (filter #(= (get-in % [:job-execution/batch-status :db/ident])
+                                               :batch-status/failed))
+                                   count)
+                      average (if (= success 0) 0
+                                (/ (->> (:job/executions job)
+                                        (filter #(= (get-in % [:job-execution/batch-status :db/ident])
+                                                    :batch-status/completed))
+                                        (map #(- (.getTime (:job-execution/end-time %))
+                                                 (.getTime (:job-execution/start-time %))))
+                                        (reduce +))
+                                   success))]
+                  (-> job
+                      (assoc :job/stats {:total total :success success :failure failure :average average}
+                        :job/latest-execution (find-latest-execution (:job/executions job))
+                        :job/next-execution   (find-next-execution jobs job)
+                        :job/dynamic-parameters (extract-job-parameters job))
+                      (dissoc :job/executions))))))
 
 (defn job-settings-resource [{:keys [datomic] :as jobs} app-name job-name & [cmd]]
   (liberator/resource
    :available-media-types ["application/edn"]
-  :allowed-methods [:get :delete :put]
-  :malformed? #(parse-body %)
-  :exists? (when-let [[app-id job-id] (find-by-name jobs app-name job-name)]
-             {:app-id app-id
-              :job-id job-id})
-  :put! (fn [{settings :edn job-id :job-id}]
-          (case cmd
-            :exclusive (d/transact datomic
-                                   [{:db/id job-id
-                                     :job/exclusive? true}])
-            
-            :status-notification
-            (if-let [id (:db/id settings)]
-              (d/transact datomic
-                          [[:db/retract job-id :job/status-notifications id]])
-              (let [status-notification-id (d/tempid :db.part/user)
-                    tempids (-> (d/transact
-                                 datomic
-                                 [[:db/add job-id
-                                   :job/status-notifications status-notification-id]
-                                  (merge {:db/id status-notification-id
-                                          :status-notification/type (:status-notification/type settings)}
-                                         (when-let [batch-status (:status-notification/batch-status settings)]
-                                           {:status-notification/batch-status batch-status})
-                                         (when-let [exit-status (:status-notification/exit-status settings)]
-                                           {:status-notification/exit-status exit-status}))])
-                                :tempids)]
-                {:db/id (d/resolve-tempid datomic tempids status-notification-id)}))
+   :allowed-methods [:get :delete :put]
+   :malformed? #(parse-body %)
+   :exists? (when-let [[app-id job-id] (find-by-name jobs app-name job-name)]
+              {:app-id app-id
+               :job-id job-id})
+   :put! (fn [{settings :edn job-id :job-id}]
+           (case cmd
+             :exclusive (d/transact datomic
+                                    [{:db/id job-id
+                                      :job/exclusive? true}])
 
-            :time-monitor
-            (d/transact datomic
-                        [(merge {:db/id #db/id[db.part/user -1]} settings)
-                         {:db/id job-id :job/time-monitor #db/id[db.part/user -1]}])))
-  
-  :delete! (fn [{settings :edn job-id :job-id}]
-             (case cmd
-               :exclusive (d/transact datomic [{:db/id job-id
-                                                :job/exclusive? false}])
-               :time-monitor
-               (when-let [time-monitor-id (some-> (d/pull datomic
-                                                          '[:job/time-monitor] job-id)
-                                                  :job/time-monitor
-                                                  :db/id)]
-                 (d/transact datomic
-                             [[:db/retract job-id
-                               :job/time-monitor time-monitor-id]
-                              [:db.fn/retractEntity time-monitor-id]]))))
+             :status-notification
+             (if-let [id (:db/id settings)]
+               (d/transact datomic
+                           [[:db/retract job-id :job/status-notifications id]])
+               (let [status-notification-id (d/tempid :db.part/user)
+                     tempids (-> (d/transact
+                                  datomic
+                                  [[:db/add job-id
+                                    :job/status-notifications status-notification-id]
+                                   (merge {:db/id status-notification-id
+                                           :status-notification/type (:status-notification/type settings)}
+                                          (when-let [batch-status (:status-notification/batch-status settings)]
+                                            {:status-notification/batch-status batch-status})
+                                          (when-let [exit-status (:status-notification/exit-status settings)]
+                                            {:status-notification/exit-status exit-status}))])
+                                 :tempids)]
+                 {:db/id (d/resolve-tempid datomic tempids status-notification-id)}))
 
-  :handle-created (fn [ctx]
-                    (select-keys ctx [:db/id]))
-  
-  :handle-ok (fn [ctx]
-               (let [settings (d/pull datomic
-                                      '[:job/exclusive?
-                                        {:job/time-monitor
-                                         [:time-monitor/duration
-                                          {:time-monitor/action [:db/ident]}
-                                          :time-monitor/notification-type]}
-                                        {:job/status-notifications
-                                         [:db/id
-                                          {:status-notification/batch-status [:db/ident]}
-                                          :status-notification/exit-status
-                                          :status-notification/type]}]
-                                      (:job-id ctx))]
-                 (-> settings
-                     (update-in
-                      [:job/status-notifications]
-                      (fn [notifications]
-                        (map #(assoc %
-                                     :status-notification/batch-status
-                                     (get-in % [:status-notification/batch-status :db/ident])) notifications)))
-                     (update-in [:job/time-monitor]
-                                (fn [time-monitor]
-                                  (when-let [action (get-in time-monitor [:time-monitor/action :db/ident])]
-                                    (assoc time-monitor :time-monitor/action action)))))))))
+             :time-monitor
+             (d/transact datomic
+                         [(merge {:db/id #db/id[db.part/user -1]} settings)
+                          {:db/id job-id :job/time-monitor #db/id[db.part/user -1]}])))
+
+   :delete! (fn [{settings :edn job-id :job-id}]
+              (case cmd
+                :exclusive (d/transact datomic [{:db/id job-id
+                                                 :job/exclusive? false}])
+                :time-monitor
+                (when-let [time-monitor-id (some-> (d/pull datomic
+                                                           '[:job/time-monitor] job-id)
+                                                   :job/time-monitor
+                                                   :db/id)]
+                  (d/transact datomic
+                              [[:db/retract job-id
+                                :job/time-monitor time-monitor-id]
+                               [:db.fn/retractEntity time-monitor-id]]))))
+
+   :handle-created (fn [ctx]
+                     (select-keys ctx [:db/id]))
+
+   :handle-ok (fn [ctx]
+                (let [settings (d/pull datomic
+                                       '[:job/exclusive?
+                                         {:job/time-monitor
+                                          [:time-monitor/duration
+                                           {:time-monitor/action [:db/ident]}
+                                           :time-monitor/notification-type]}
+                                         {:job/status-notifications
+                                          [:db/id
+                                           {:status-notification/batch-status [:db/ident]}
+                                           :status-notification/exit-status
+                                           :status-notification/type]}]
+                                       (:job-id ctx))]
+                  (-> settings
+                      (update-in
+                       [:job/status-notifications]
+                       (fn [notifications]
+                         (map #(assoc %
+                                 :status-notification/batch-status
+                                 (get-in % [:status-notification/batch-status :db/ident])) notifications)))
+                      (update-in [:job/time-monitor]
+                                 (fn [time-monitor]
+                                   (when-let [action (get-in time-monitor [:time-monitor/action :db/ident])]
+                                     (assoc time-monitor :time-monitor/action action)))))))))
 
 (defn- execute-job [{:keys [datomic scheduler] :as jobs} app-name job-name ctx]
   (when-let [[app-id job-id] (find-by-name jobs app-name job-name)]
@@ -473,7 +475,7 @@
                                            id)]
                   {:execution execution
                    :job-id job-id})))
-   
+
    :put! (fn [{parameters :edn execution :execution job-id :job-id}]
            (case cmd
              :abandon (ag/abandon-execution
@@ -495,7 +497,7 @@
                                    id
                                    :on-success (fn [response]
                                                  (save-execution jobs id response)))))
-             
+
              :restart (let [execution-id (d/tempid :db.part/user)
                             tempids (-> (d/transact
                                          datomic
@@ -529,7 +531,7 @@
                                         new-id
                                         :on-success (fn [new-exec]
                                                       (save-execution jobs new-id new-exec))))))
-             
+
 
              :alert (let [job (d/query datomic
                                        '{:find [(pull ?job [:job/name
@@ -549,10 +551,10 @@
   component/Lifecycle
 
   (start [component]
-    component)
+         component)
 
   (stop [component]
-    (dissoc component :list-resource :entry-resource)))
+        (dissoc component :list-resource :entry-resource)))
 
 (defn jobs-component [options]
   (map->Jobs options))
