@@ -23,8 +23,7 @@
            [org.jsoup Jsoup]
            [org.jsoup.nodes Element Node]
            [org.jsoup.parser Tag Parser]
-           [net.unit8.job_streamer.control_bus.bpmn BpmnParser]
-           (org.quartz JobKey TriggerKey)))
+           [net.unit8.job_streamer.control_bus.bpmn BpmnParser]))
 
 (defn find-latest-execution
   "Find latest from given executions."
