@@ -569,7 +569,7 @@
    :put! (fn [{job :edn job-id :job-id}]
            (let [cron-notation (d/query
                                  datomic
-                                 '{:find [?cron-notation]
+                                 '{:find [?cron-notation .]
                                    :in [$ ?app-name ?job-name]
                                    :where [[?app :application/name ?app-name]
                                            [?app :application/jobs ?job]
@@ -579,21 +579,19 @@
                                  app-name job-name)
                  calendar-name (d/query
                                  datomic
-                                 '{:find [?calendar-name]
+                                 '{:find [?calendar-name .]
                                    :in [$ ?app-name ?job-name]
                                    :where [[?app :application/name ?app-name]
                                            [?app :application/jobs ?job]
                                            [?job :job/name ?job-name]
                                            [?job :job/schedule ?schedule]
-                                           [?calendar :schedule/cron-notation ?calendar]
+                                           [?calendar :schedule/calendar ?calendar]
                                            [?calendar :calendar/name ?calendar-name]]}
                                  app-name job-name)]
              (d/transact datomic (edn->datoms job job-id))
-             (when-not (nil? (-> cron-notation first first))
+             (when-not (nil? cron-notation)
                (scheduler/unschedule scheduler job-id)
-               (scheduler/schedule scheduler job-id (-> cron-notation first first) (-> calendar-name first first))))
-           (log/info (class scheduler))
-           (d/transact datomic (edn->datoms job job-id)))
+               (scheduler/schedule scheduler job-id cron-notation calendar-name)))) ; Because job execute by job name
    :delete! (fn [{job-id :job-id app-id :app-id}]
               (scheduler/unschedule scheduler job-id)
               (d/transact datomic
