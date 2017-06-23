@@ -23,7 +23,8 @@
            [org.jsoup Jsoup]
            [org.jsoup.nodes Element Node]
            [org.jsoup.parser Tag Parser]
-           [net.unit8.job_streamer.control_bus.bpmn BpmnParser]))
+           [net.unit8.job_streamer.control_bus.bpmn BpmnParser]
+           (org.quartz JobKey TriggerKey)))
 
 (defn find-latest-execution
   "Find latest from given executions."
@@ -567,6 +568,32 @@
                    :delete (:permission/delete-job permissions)
                    false)))
    :put! (fn [{job :edn job-id :job-id}]
+           (let [cron-notation (d/query
+                                 datomic
+                                 '{:find [?cron-notation]
+                                   :in [$ ?app-name ?job-name]
+                                   :where [[?app :application/name ?app-name]
+                                           [?app :application/jobs ?job]
+                                           [?job :job/name ?job-name]
+                                           [?job :job/schedule ?schedule]
+                                           [?schedule :schedule/cron-notation ?cron-notation]]}
+                                 app-name job-name)
+                 calendar-name (d/query
+                                 datomic
+                                 '{:find [?calendar-name]
+                                   :in [$ ?app-name ?job-name]
+                                   :where [[?app :application/name ?app-name]
+                                           [?app :application/jobs ?job]
+                                           [?job :job/name ?job-name]
+                                           [?job :job/schedule ?schedule]
+                                           [?calendar :schedule/cron-notation ?calendar]
+                                           [?calendar :calendar/name ?calendar-name]]}
+                                 app-name job-name)]
+             (d/transact datomic (edn->datoms job job-id))
+             (when-not (nil? (-> cron-notation first first))
+               (scheduler/unschedule scheduler job-id)
+               (scheduler/schedule scheduler job-id (-> cron-notation first first) (-> calendar-name first first))))
+           (log/info (class scheduler))
            (d/transact datomic (edn->datoms job job-id)))
    :delete! (fn [{job-id :job-id app-id :app-id}]
               (scheduler/unschedule scheduler job-id)
