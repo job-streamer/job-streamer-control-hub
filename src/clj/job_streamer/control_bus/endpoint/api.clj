@@ -27,6 +27,8 @@
    (ANY "/users" [] (auth/list-resource auth))
    (ANY "/user" [] (auth/entry-resource auth nil))
    (ANY ["/user/:user-id" :user-id #".*"] [user-id] (auth/entry-resource auth user-id))
+   (ANY "/oauth" request (auth/redirect-to-auth-provider auth request))
+   (ANY "/oauth/cb" request (auth/oauth-resource auth request))
 
    ;; Job
    (ANY "/:app-name/jobs" [app-name]

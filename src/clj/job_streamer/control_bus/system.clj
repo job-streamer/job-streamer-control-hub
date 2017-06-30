@@ -7,6 +7,7 @@
             [ring.middleware.multipart-params :refer [wrap-multipart-params]]
             [ring.middleware.defaults :refer [wrap-defaults api-defaults]]
             [ring.util.response :refer [header]]
+            [ring.util.request :refer [path-info]]
             (job-streamer.control-bus.component
              [undertow   :refer [undertow-server]]
              [jobs       :refer [jobs-component]]
@@ -57,19 +58,16 @@
             (header "Access-Control-Allow-Origin" access-control-allow-origin)
             (header "Access-Control-Allow-Credentials" "true"))))))
 
-(def access-rules [{:pattern #"^/(?!auth|user|healthcheck|version).*$"
+(def access-rules [{:pattern #"^/(?!auth|oauth|user|healthcheck|version).*$"
                     :handler authenticated?}])
 
 (defn token-base [token-provider]
   (token-backend
    {:authfn
     (fn [req token]
-      (try
-        (let [user (token/auth-by token-provider token)]
-          (log/info "token authentication token=" token ", user=" user)
-          user)
-        (catch Exception e
-          (log/error "auth-by error" e))))}))
+      (when-let [user (token/auth-by token-provider token)]
+        (log/info "token authentication token=" token ", user=" user)
+        user))}))
 
 (defn wrap-authn [handler token-provider & backends]
   (apply wrap-authentication handler (conj backends (token-base token-provider))))
