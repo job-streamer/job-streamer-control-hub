@@ -8,9 +8,11 @@
             [liberator.core :as liberator]
             [liberator.representation :refer [ring-response]]
             [clojure.string :as str]
+            [clojure.data.json :as json]
+            [clj-http.client :as client]
             [ring.util.response :refer [response content-type header redirect]]
             (job-streamer.control-bus [validation :refer [validate]]
-                                      [util :refer [parse-body]])
+                                      [util :refer [parse-body format-url generate-token]])
             (job-streamer.control-bus.component [datomic :as d]
                                                 [token :as token])))
 
@@ -30,6 +32,30 @@
                                        [?app :application/members ?member]
                                        [?app :application/name ?app-name]]}
                              user-id password app-name)]
+      (let [permissions (->> (d/query datomic
+                                      '{:find [?permission]
+                                        :in [$ ?app-name ?user-id]
+                                        :where [[?member :member/user ?user]
+                                                [?member :member/rolls ?roll]
+                                                [?roll :roll/permissions ?permission]
+                                                [?user :user/id ?user-id]
+                                                [?app :application/members ?member]
+                                                [?app :application/name ?app-name]]}
+                                      app-name user-id)
+                             (apply concat)
+                             set)]
+        (assoc user :permissions permissions)))))
+
+(defn- find-user [datomic user-id app-name]
+  (when (not-empty user-id)
+    (when-let [user (d/query datomic
+                             '{:find [(pull ?s [:*]) .]
+                               :in [$ ?uname ?app-name]
+                               :where [[?s :user/id ?uname]
+                                       [?member :member/user ?s]
+                                       [?app :application/members ?member]
+                                       [?app :application/name ?app-name]]}
+                             user-id app-name)]
       (let [permissions (->> (d/query datomic
                                       '{:find [?permission]
                                         :in [$ ?app-name ?user-id]
@@ -153,6 +179,85 @@
     :delete! (fn [_]
                (d/transact datomic
                            [[:db.fn/retractEntity [:user/id user-id]]]))))
+
+(defn redirect-to-auth-provider [{:keys [auth-endpoint]} request]
+  (log/debug "Redirect to auth provider")
+  (let [state (generate-token)
+        session-with-state (assoc (:session request) :state state)]
+    (-> (assoc-in auth-endpoint [:query :state] state)
+        format-url
+        redirect
+        (assoc :session session-with-state))))
+
+(defn fetch-access-token [{:keys [token-endpoint]} code]
+  (when (not-empty code)
+    (log/debug "Fetch access-token with code :" code)
+    (let [{body :body} (client/post (:url token-endpoint)
+                                    {:form-params (-> (:query token-endpoint)
+                                                      (assoc :code code))})
+          {:keys [access_token refresh_token]} (json/read-str body :key-fn keyword)]
+      (when access_token
+        (log/debug "access-token :" access_token)
+        {:access-token access_token :refresh-token refresh_token}))))
+
+(defn refresh-access-token [{:keys [token-endpoint]} refresh-token]
+  (when (not-empty refresh-token)
+    (log/debug "refresh access-token with refresh-token :" refresh-token)
+    (let [query (-> (:query token-endpoint)
+                    (assoc :grant_type "refresh_token"
+                           :refresh_token refresh-token))
+          {body :body} (client/post (:url token-endpoint)
+                                    {:form-params query})
+          {:keys [access_token refresh_token]} (json/read-str body :key-fn keyword)]
+      (when access_token
+        {:access-token access_token :refresh-token refresh_token}))))
+
+(defn check-access-token [{:keys [introspection-endpoint]} access-token]
+  (when (not-empty access-token)
+    (log/debug "check access-token :" access-token)
+    (let [query (-> (:query introspection-endpoint)
+                    (assoc :token access-token))
+          {:keys [status body] :as res} (client/post (:url introspection-endpoint)
+                                             {:form-params query
+                                             :content-type :x-www-form-urlencoded
+                                            ;  :debug true
+                                            })]
+      (when (= 200 status)
+        (let [{:keys [username active sub]} (json/read-str body :key-fn keyword)]
+          (when active
+            (log/debugf "active access-token : %s, user-id : %s" access-token (or username sub))
+            {:user/id (or username sub)}))))))
+
+(defn oauth-by
+  [{:keys [token datomic] :as auth-component} {:keys [access-token refresh-token]}]
+  (let [app-name "default"
+        register (fn [user-id access-token refresh-token]
+                   (let [user (-> (find-user datomic user-id app-name)
+                                  (assoc :access-token access-token :refresh-token refresh-token))]
+                     (token/register-token token user access-token)
+                     (select-keys user [:user/id :permissions :refresh-token :access-token])))]
+    (if-let [{user-id :user/id :as user} (check-access-token auth-component access-token)]
+      (do
+        (if-not (find-user datomic user-id app-name)
+          (signup datomic (assoc user :user/token access-token) "operator"))
+        (register user-id access-token refresh-token))
+      (when-let [{:keys [access-token refresh-token]} (refresh-access-token auth-component refresh-token)]
+        (when-let [{user-id :user/id} (check-access-token auth-component access-token)]
+          (register user-id access-token refresh-token))))))
+
+(defn oauth-resource [{:keys [console-uri] :as auth} request]
+  (let [{:keys [state code error]} (:params request)
+        session-state (get-in request [:session :state])]
+    (if (and (some? code)
+             (= state session-state))
+      (if-let [identity (some->> code
+                                 (fetch-access-token auth)
+                                 (oauth-by auth))]
+        (-> (redirect console-uri)
+            (assoc-in [:session :identity] identity))
+        (redirect console-uri))
+      (-> (redirect console-uri)
+          (assoc-in [:params :error] error)))))
 
 (defrecord Auth [datomic]
   component/Lifecycle

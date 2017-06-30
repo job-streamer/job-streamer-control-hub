@@ -7,6 +7,7 @@
             [ring.middleware.multipart-params :refer [wrap-multipart-params]]
             [ring.middleware.defaults :refer [wrap-defaults api-defaults]]
             [ring.util.response :refer [header]]
+            [ring.util.request :refer [path-info]]
             (job-streamer.control-bus.component
              [undertow   :refer [undertow-server]]
              [jobs       :refer [jobs-component]]
@@ -21,7 +22,7 @@
              [migration  :refer [migration-component]]
              [socketapp  :refer [socketapp-component]]
              [token      :refer [token-provider-component] :as token]
-             [auth       :refer [auth-component]])
+             [auth       :refer [auth-component] :as auth])
             (job-streamer.control-bus.endpoint
              [api :refer [api-endpoint]])
             [clojure.tools.logging :as log]
@@ -57,7 +58,7 @@
             (header "Access-Control-Allow-Origin" access-control-allow-origin)
             (header "Access-Control-Allow-Credentials" "true"))))))
 
-(def access-rules [{:pattern #"^/(?!auth|user|healthcheck|version).*$"
+(def access-rules [{:pattern #"^/(?!auth|oauth|user|healthcheck|version).*$"
                     :handler authenticated?}])
 
 (defn token-base [token-provider]
@@ -71,20 +72,33 @@
         (catch Exception e
           (log/error "auth-by error" e))))}))
 
-(defn wrap-authn [handler token-provider & backends]
-  (apply wrap-authentication handler (conj backends (token-base token-provider))))
+(defn session-base [token-component auth-component]
+  (session-backend
+    (when (:oauth? auth-component)
+      {:authfn
+        (fn [{:keys [access-token refresh-token] :as identity}]
+          (log/debug "request with access-token :" access-token)
+          (log/debug "request with refresh-token :" refresh-token)
+          (when access-token
+            (if (token/auth-by token-component access-token)
+              identity
+              (when-let [new (auth/oauth-by auth-component identity)]
+                new))))})))
+
+(defn wrap-authn [handler token-provider auth-component & backends]
+  (apply wrap-authentication handler (conj backends (session-base token-provider auth-component)
+                                                    (token-base token-provider))))
 
 (def base-config
   {:app {:middleware [[wrap-not-found :not-found]
                       [wrap-access-rules   :access-rules]
                       [wrap-authorization  :authorization]
-                      [wrap-authn          :token :session-base]
+                      [wrap-authn          :token :auth]
                       [wrap-same-origin-policy :same-origin]
                       [wrap-multipart-params]
                       [wrap-internal-server-error :same-origin]
                       [wrap-defaults :defaults]]
          :access-rules {:rules access-rules :policy :allow}
-         :session-base (session-backend)
          :authorization (fn [req meta]
                           (if (authenticated? req)
                             (http/response "Permission denied" 403)
@@ -114,7 +128,7 @@
          :auth       (auth-component       (:auth config)))
         (component/system-using
          {:http      [:app :socketapp]
-          :app       [:api :token]
+          :app       [:api :auth :token]
           :api       [:apps :calendar :agents :jobs :scheduler :auth :datomic]
           :socketapp [:datomic :jobs :agents]
           :jobs      [:datomic :scheduler :agents :apps]

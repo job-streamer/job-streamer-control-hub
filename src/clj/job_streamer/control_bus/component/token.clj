@@ -10,6 +10,7 @@
 
 (defprotocol ITokenProvider
   (new-token [this user])
+  (register-token [this user token])
   (auth-by   [this token]))
 
 (defn token-resource [{:keys [datomic token]}]
@@ -36,13 +37,13 @@
     :handle-created (fn [ctx]
                       (::post-response ctx))))
 
-(defrecord TokenProvider [disposable?]
+(defrecord TokenProvider [disposable? cache-time]
   component/Lifecycle
 
   (start [component]
          (if (:token-cache component)
            component
-           (let [token-cache (atom (cache/ttl-cache-factory {} :ttl (* 30 60 1000)))]
+           (let [token-cache (atom (cache/ttl-cache-factory {} :ttl cache-time))]
              (assoc component :token-cache token-cache))))
 
   (stop [component]
@@ -52,15 +53,16 @@
 
   ITokenProvider
   (new-token [component user]
-             (let [token (java.util.UUID/randomUUID)]
+             (let [token (.toString (java.util.UUID/randomUUID))]
                (swap! (:token-cache component) assoc token user)
                token))
 
+  (register-token [component user token]
+                  (swap! (:token-cache component) assoc token user)
+                  token)
+
   (auth-by [component token]
-           (let [uuid-token (condp instance? token
-                              String (UUID/fromString token)
-                              UUID   token)]
-             (cache/lookup @(:token-cache component) uuid-token))))
+           (cache/lookup @(:token-cache component) token)))
 
 (defn token-provider-component [options]
   (map->TokenProvider options))
