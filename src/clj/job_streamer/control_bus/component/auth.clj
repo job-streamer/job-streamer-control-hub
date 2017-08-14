@@ -16,7 +16,8 @@
             (job-streamer.control-bus [validation :refer [validate]]
                                       [util :refer [parse-body generate-token]])
             (job-streamer.control-bus.component [datomic :as d]
-                                                [token :as token])))
+                                                [token :as token]
+                                                [migration :refer [roll-migration]])))
 
 (defn- find-permissions [datomic user-id app-name]
   (->> (d/query datomic
@@ -251,7 +252,7 @@
           (redirect (str console-url "/login")))
         (redirect (str console-url "/login"))))))
 
-(defrecord Auth [datomic]
+(defrecord Auth [datomic migration]
   component/Lifecycle
 
   (start [component]
@@ -284,7 +285,7 @@
                             "admin")
            (signup datomic {:user/id "admin" :user/password "password123"} "admin")
            (signup datomic {:user/id "guest" :user/password "password123"} "operator"))
-
+         (roll-migration migration)
          component)
 
   (stop [component]

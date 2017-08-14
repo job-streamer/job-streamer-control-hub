@@ -125,4 +125,4 @@
           :migration [:datomic]
           :recoverer [:datomic :jobs :agents]
           :dispatcher [:datomic :apps :jobs :agents]
-          :auth      [:token :datomic :apps]}))))
+          :auth      [:token :datomic :migration :apps]}))))
