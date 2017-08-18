@@ -62,7 +62,7 @@
              :where [?e :roll/name ?n]]
            roll-name))
 
-(defn- signup [datomic user roll-name]
+(defn signup [datomic user roll-name]
   (when-let [user (let [salt (nonce/random-nonce 16)
                         password (some-> (not-empty (:user/password user))
                                          (.getBytes)
@@ -158,35 +158,6 @@
   component/Lifecycle
 
   (start [component]
-
-         ;; Create an initil user and rolls.
-         (->> [{:db/id (d/tempid :db.part/user)
-                :roll/name "admin"
-                :roll/permissions [:permission/read-job
-                                   :permission/create-job
-                                   :permission/update-job
-                                   :permission/delete-job
-                                   :permission/execute-job]}
-               {:db/id (d/tempid :db.part/user)
-                :roll/name "operator"
-                :roll/permissions [:permission/read-job
-                                   :permission/execute-job]}
-               {:db/id (d/tempid :db.part/user)
-                :roll/name "watcher"
-                :roll/permissions [:permission/read-job]}]
-              (filter #(nil? (d/query datomic
-                                      '[:find ?e .
-                                        :in $ ?n
-                                        :where [?e :roll/name ?n]]
-                                      (:roll/name %))))
-              (d/transact datomic))
-         (when-not (d/query datomic
-                            '[:find ?e .
-                              :in $ ?n
-                              :where [?e :user/id ?n]]
-                            "admin")
-           (signup datomic {:user/id "admin" :user/password "password123"} "admin"))
-
          component)
 
   (stop [component]

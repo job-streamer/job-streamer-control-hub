@@ -95,4 +95,7 @@
    (schema roll
            (fields
              [name :string :indexed :unique-value]
-             [permissions :keyword :many]))])
+             [permissions :keyword :many]))
+   (schema schema
+           (fields
+             [version :long]))])
