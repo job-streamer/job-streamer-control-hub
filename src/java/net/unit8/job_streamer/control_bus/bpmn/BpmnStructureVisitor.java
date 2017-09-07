@@ -95,6 +95,16 @@ public class BpmnStructureVisitor implements NodeVisitor {
         }
     }
 
+    private void parseTransitionAttr(Element bpmnEl, Element jobEl) {
+        for (Element outgoing : bpmnEl.select("> bpmn|outgoing")) {
+            Element transition = transitions.get(outgoing.text().trim());
+            String targetRef = transition.attr("targetRef");
+            if(batchComponents.containsKey(targetRef)){
+                jobEl.attr("next", or(batchComponents.get(targetRef).attr("name"),batchComponents.get(targetRef).attr("id")));
+            }
+        }
+    }
+
     private void copyAttribute(Element el, Element bpmnEl, String attrName) {
         copyAttribute(el, bpmnEl, attrName, null);
     }
@@ -130,7 +140,6 @@ public class BpmnStructureVisitor implements NodeVisitor {
                 copyAttribute(el, (Element) node, "allow-start-if-complete");
                 parseProperties((Element) node, el);
                 parseListeners((Element) node, el);
-                parseTransition((Element) node, el);
                 current = el;
                 break;
 
@@ -150,7 +159,6 @@ public class BpmnStructureVisitor implements NodeVisitor {
                                 node.attr("name"),
                                 node.attr("id")
                         ));
-                parseTransition((Element) node, el);
                 current.appendChild(el);
                 current = el;
                 break;
@@ -160,7 +168,6 @@ public class BpmnStructureVisitor implements NodeVisitor {
                                 node.attr("name"),
                                 node.attr("id")
                         ));
-                parseTransition((Element) node, el);
                 current.appendChild(el);
                 current = el;
                 break;
@@ -198,6 +205,18 @@ public class BpmnStructureVisitor implements NodeVisitor {
 
     @Override
     public void tail(Node node, int i) {
+        switch(node.nodeName()) {
+            case "jsr352:step":
+                parseTransition((Element) node, current);
+                break;
+            case "jsr352:flow":
+                parseTransition((Element) node, current);
+                break;
+            case "jsr352:split":
+                parseTransitionAttr((Element) node, current);
+                break;
+            default:
+        }
         if (TARGET_TAGS.contains(node.nodeName())) {
             current = current.parent();
         }
